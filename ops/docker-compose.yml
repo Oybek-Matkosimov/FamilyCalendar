@@ -1,0 +1,79 @@
+# Self-hosting stack: PostgreSQL + migrations + app + HTTPS (Caddy) + nightly backups.
+#   cp ops/.env.example .env   # then edit the values
+#   docker compose -f ops/docker-compose.yml --env-file .env up -d --build
+name: familycal
+
+x-app-env: &app-env
+  DATABASE_URL: postgres://familycal:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/familycal
+  APP_ORIGIN: https://${DOMAIN:?set DOMAIN in .env}
+  TRUST_PROXY: "true"
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: familycal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: familycal
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U familycal -d familycal"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  migrate:
+    build: { context: .., dockerfile: ops/Dockerfile, target: migrate }
+    environment: *app-env
+    depends_on:
+      db: { condition: service_healthy }
+    restart: "no"
+
+  app:
+    build: { context: .., dockerfile: ops/Dockerfile, target: runner }
+    restart: unless-stopped
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    expose: ["3000"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [app]
+
+  backup:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://familycal:${POSTGRES_PASSWORD}@db:5432/familycal
+      BACKUP_DIR: /backups
+      KEEP_DAILY: ${KEEP_DAILY:-30}
+      KEEP_MONTHLY: ${KEEP_MONTHLY:-12}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./backup.sh:/ops/backup.sh:ro
+      - backups:/backups
+    depends_on:
+      db: { condition: service_healthy }
+    # first backup shortly after start, then every 24 hours
+    entrypoint: ["bash", "-c", "sleep 60; while true; do /ops/backup.sh || echo 'BACKUP FAILED' >&2; sleep 86400; done"]
+
+volumes:
+  pgdata:
+  backups:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,10 @@
+# Automatic HTTPS (Let's Encrypt) for $DOMAIN. DNS for $DOMAIN must point at this machine; ports 80 and 443 must be open.
+{$DOMAIN} {
+	# Do not compress the live-update stream (it must be flushed immediately).
+	@compressible not path /api/stream
+	encode @compressible zstd gzip
+
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
+}

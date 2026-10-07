@@ -1,0 +1,10 @@
+node_modules
+.next
+.data
+.git
+.superpowers
+.claude
+test-results
+playwright-report
+.env*
+docs

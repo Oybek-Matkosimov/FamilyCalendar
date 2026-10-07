@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { isValidTimezone } from './time';
+import { AppError } from './errors';
 
 // eslint-disable-next-line no-control-regex
 const CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
@@ -69,3 +70,25 @@ export type EventPatch = z.infer<typeof eventPatchSchema>;
 export const rangeSchema = z
   .object({ from: z.coerce.date(), to: z.coerce.date() })
   .refine((r) => r.from < r.to && r.to.getTime() - r.from.getTime() <= 366 * 86400000, 'Invalid range (max 366 days)');
+
+export const updateCalendarSchema = z.object({
+  name: text(60).optional(),
+  timezone: timezoneSchema.optional(),
+  settings: z.object({ membersCanEditAll: z.boolean().optional() }).optional(),
+});
+export type UpdateCalendarInput = z.infer<typeof updateCalendarSchema>;
+
+export const changePasswordSchema = z.object({ currentPassword: z.string().min(1).max(128), newPassword: passwordSchema });
+export const recoverSchema = z.object({
+  code: codeSchema,
+  recoveryCode: z.string().transform((s) => s.trim().toUpperCase()).pipe(z.string().min(8).max(32)),
+  newPassword: passwordSchema,
+});
+export const deleteCalendarSchema = z.object({ confirmName: z.string().max(200) });
+
+/** Parse unknown input with a zod schema, converting failures to AppError('VALIDATION'). */
+export function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
+  const r = schema.safeParse(data);
+  if (!r.success) throw new AppError('VALIDATION', r.error.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('; '));
+  return r.data;
+}

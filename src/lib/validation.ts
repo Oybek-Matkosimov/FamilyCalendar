@@ -61,6 +61,7 @@ export const eventInputSchema = z.object({
 export type EventInput = z.infer<typeof eventInputSchema>;
 
 export const eventPatchSchema = eventInputSchema.partial().extend({
+  recurrence: recurrenceInputSchema.nullable().optional(),
   version: z.number().int().min(1),
   scope: z.enum(['this', 'series']).default('series'),
   occurrenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -104,3 +105,18 @@ export const removeMemberQuerySchema = z
   .refine((q) => q.events !== 'reassign' || !!q.to, { message: 'to is required when events=reassign', path: ['to'] });
 
 export const joinInfoQuerySchema = z.object({ token: z.string().min(1).max(200) });
+
+export const eventsQuerySchema = z.object({
+  from: z.coerce.date(),
+  to: z.coerce.date(),
+  member: z.string().uuid().optional(),
+  q: z.string().max(100).optional(),
+});
+
+export const conflictsQuerySchema = z.object({ from: z.coerce.date(), to: z.coerce.date() });
+
+export const deleteEventQuerySchema = z.object({
+  version: z.coerce.number().int().min(1),
+  scope: z.enum(['this', 'series']).default('series'),
+  occurrenceDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});

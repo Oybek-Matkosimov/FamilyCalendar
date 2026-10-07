@@ -7,7 +7,7 @@ const ev = { createdBy: 'o', memberId: 'o' };
 
 describe('authorize', () => {
   it('owner can do admin actions; member cannot', () => {
-    for (const a of ['calendar.update', 'calendar.delete', 'password.change', 'member.remove', 'invite.manage'] as const) {
+    for (const a of ['calendar.update', 'calendar.delete', 'password.change', 'member.remove', 'invite.manage', 'event.restore'] as const) {
       expect(() => authorize(owner, a)).not.toThrow();
       expect(() => authorize(mom, a)).toThrow(/permission/i);
     }

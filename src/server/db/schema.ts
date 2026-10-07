@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { RecurrenceInput } from '@/lib/validation';
 import {
   pgTable, uuid, text, timestamp, integer, boolean, jsonb, date,
   uniqueIndex, index, unique, foreignKey, check, primaryKey,
@@ -66,6 +67,7 @@ export const events = pgTable('events', {
   localStart: timestamp('local_start', { mode: 'string' }),
   localEnd: timestamp('local_end', { mode: 'string' }),
   rrule: text('rrule'),
+  recurrence: jsonb('recurrence').$type<RecurrenceInput>(),
   recurUntil: timestamp('recur_until', { withTimezone: true }),
   exceptions: jsonb('exceptions').$type<string[]>().notNull().default([]),
   seriesId: uuid('series_id'),

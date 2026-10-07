@@ -8,14 +8,14 @@ export interface Actor {
 
 export type Action =
   | 'calendar.update' | 'calendar.delete' | 'password.change' | 'member.remove' | 'invite.manage'
-  | 'event.create' | 'event.update' | 'event.delete' | 'event.view';
+  | 'event.create' | 'event.update' | 'event.delete' | 'event.view' | 'event.restore';
 
 export interface PolicyContext {
   settings?: { membersCanEditAll: boolean };
   event?: { createdBy: string; memberId: string };
 }
 
-const ADMIN: Action[] = ['calendar.update', 'calendar.delete', 'password.change', 'member.remove', 'invite.manage'];
+const ADMIN: Action[] = ['calendar.update', 'calendar.delete', 'password.change', 'member.remove', 'invite.manage', 'event.restore'];
 
 /** Single source of truth for who may do what. Throws FORBIDDEN. */
 export function authorize(actor: Actor, action: Action, ctx: PolicyContext = {}): void {

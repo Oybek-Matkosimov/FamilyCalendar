@@ -11,7 +11,11 @@ Each control lists where it is implemented and which automated test proves it. T
 | Session tokens are random 256-bit values; only a SHA-256 hash is stored | `auth/session.ts`, `auth/tokens.ts` | `auth-primitives.test.ts` |
 | Cookie is `HttpOnly`, `SameSite=Lax`, and `Secure` in production | `auth/request.ts` | `api-calendars.test.ts`, `npm run smoke:prod` |
 | Wrong ID and wrong password give the same error and similar timing | `joinCalendar` (dummy hash for unknown IDs) | `calendars.test.ts` |
-| Brute-force lockout (5 failures → exponential back-off up to 1 hour), stored in the database so it holds across instances and restarts | `auth/lockout.ts` | `auth-primitives.test.ts`, `calendars.test.ts`, `auth.spec.ts` (e2e) |
+| Brute-force lockout (5 failures, then 1, 2, 4 … up to 60 minutes; the count is forgotten only after 15 quiet minutes, so steady guessing keeps escalating), stored in the database so it holds across instances and restarts | `auth/lockout.ts` | `auth-primitives.test.ts`, `review-fixes.test.ts`, `calendars.test.ts`, `auth.spec.ts` (e2e) |
+| Signing in as an existing member needs the shared password; signing in as the **owner** also needs the recovery code, so a member cannot take over the calendar | `services/calendars.ts` | `review-fixes.test.ts`, `auth.spec.ts` (e2e) |
+| Dates are limited to 30 years either side of today, so one request cannot make the server expand recurring events for centuries | `lib/time.ts`, `lib/validation.ts`, `services/events.ts` | `review-fixes.test.ts` |
+| Client IP for rate limits comes from the trusted (right-most) `X-Forwarded-For` hop only; forged left-hand values are ignored | `auth/request.ts` | `review-fixes.test.ts` |
+| Invisible and control characters are stripped from names and text, so look-alike or blank names cannot be created | `lib/validation.ts` | `review-fixes.test.ts` |
 | Authorization on every protected endpoint; tenancy comes from the session, never from the URL | `server/api.ts`, `authz/policy.ts`, repositories always filter by `calendar_id` | `security.test.ts` (unauthenticated, tenant and CSRF sweeps over every route), `events.test.ts`, `members-invites.test.ts` |
 | Changing an ID in a URL or request returns 404 and never another family's data | all `[id]` routes | `security.test.ts` tenant sweep |
 | Database enforces that an event's member belongs to the same calendar | composite foreign key | `schema.test.ts` |
@@ -42,6 +46,6 @@ Each control lists where it is implemented and which automated test proves it. T
 
 ## Things to know
 
-- Everyone in a family shares one password. Anyone who knows it can join and can sign in as any member name (the app asks "Is this you?"). The owner can remove people and change the password, which signs everyone else out.
+- Everyone in a family shares one password. Anyone who knows it can join, and can sign in as any existing **member** name (the app asks "Is this you?"). Signing in as the **owner** additionally needs the owner's recovery code. The owner can remove people and change the password, which signs everyone else out. A removed person can rejoin with the shared password unless the password is changed too.
 - Calendar IDs (`ABCD-1234`) are short so they are easy to share. The password and the lockout, not the ID, protect the data. Choose a strong password.
 - A person who gets locked out of a calendar (five wrong guesses) waits up to a minute, then longer if it continues. An attacker can cause this delay for a family. That is the price of brute-force protection without accounts.

@@ -53,7 +53,7 @@ services:
     depends_on: [app]
 
   backup:
-    image: postgres:16
+    build: { context: ., dockerfile: backup.Dockerfile }
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://familycal:${POSTGRES_PASSWORD}@db:5432/familycal

@@ -6,7 +6,8 @@
 # What it does
 #   1. pg_dump in custom format (compressed, restorable with pg_restore) into BACKUP_DIR
 #   2. verifies the dump is readable (pg_restore --list) BEFORE it is kept
-#   3. optionally copies it off-site to S3-compatible storage (needs the aws CLI)
+#   3. optionally copies it off-site to S3-compatible storage (needs the aws CLI). A failed upload is reported with a
+#      non-zero exit status, but never stops step 4
 #   4. applies retention: newest KEEP_DAILY dumps + the oldest dump of each of the last KEEP_MONTHLY months
 #
 # Requires: bash 4+, pg_dump / pg_restore (PostgreSQL client tools, same major version as the server or newer).
@@ -41,13 +42,20 @@ trap - EXIT
 size="$(wc -c < "$final" | tr -d ' ')"
 log "ok: $final ($size bytes, $entries entries)"
 
+upload_failed=0
 if [ -n "$S3_BUCKET" ]; then
-  command -v aws >/dev/null || { log "ERROR: S3_BUCKET set but the aws CLI is not installed"; exit 1; }
-  endpoint=()
-  [ -n "$S3_ENDPOINT" ] && endpoint=(--endpoint-url "$S3_ENDPOINT")
-  log "uploading to s3://$S3_BUCKET/"
-  aws "${endpoint[@]}" s3 cp "$final" "s3://$S3_BUCKET/$(basename "$final")" --only-show-errors
-  log "uploaded"
+  if ! command -v aws >/dev/null; then
+    log "ERROR: S3_BUCKET is set but the aws CLI is not installed"; upload_failed=1
+  else
+    endpoint=()
+    [ -n "$S3_ENDPOINT" ] && endpoint=(--endpoint-url "$S3_ENDPOINT")
+    log "uploading to s3://$S3_BUCKET/"
+    if aws "${endpoint[@]}" s3 cp "$final" "s3://$S3_BUCKET/$(basename "$final")" --only-show-errors; then
+      log "uploaded"
+    else
+      log "ERROR: upload to s3://$S3_BUCKET/ failed"; upload_failed=1
+    fi
+  fi
 fi
 
 # ---- retention (local copies) ----
@@ -77,5 +85,9 @@ if [ "${#files[@]}" -gt 0 ]; then
     if [ -z "${keep[$f]:-}" ]; then rm -f -- "$f"; removed=$((removed + 1)); fi
   done
   log "retention: kept $(( ${#sorted[@]} - removed )), removed $removed"
+fi
+if [ "$upload_failed" -ne 0 ]; then
+  log "finished with errors: the local backup is safe but the off-site copy was NOT made"
+  exit 1
 fi
 log "done"

@@ -22,7 +22,9 @@ test.describe('dashboard', () => {
     const f = await family(browser);
     const day = isoDay(2);
     const ev = await addEventApi(f.owner, { title: 'Gym', memberId: f.fam.ownerId, date: day, start: '18:00', end: '19:30', description: 'Leg day' });
+    const streamOpen = f.page.waitForResponse((r) => r.url().includes('/api/stream'), { timeout: 60_000 });
     await f.page.goto('/calendar');
+    await streamOpen; // the live-update connection is established before the other person edits
     await expect(monthCell(f.page, day)).toHaveAttribute('aria-label', /1 event, scheduled/);
     await expect(monthCell(f.page, day)).toContainText('✓');
 

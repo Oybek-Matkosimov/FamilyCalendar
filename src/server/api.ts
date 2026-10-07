@@ -46,8 +46,10 @@ export function api<T = undefined>(
       const token = readSessionToken(req);
       const actor = token ? await resolveSession(db, token) : null;
       if (opts.auth && !actor) throw new AppError('UNAUTHENTICATED', 'Please sign in');
-      const ip = clientIp(req, env.TRUST_PROXY);
-      if (!limiter.take(actor ? `m:${actor.memberId}` : `ip:${ip}`)) {
+      const ip = clientIp(req, env.TRUST_PROXY, env.TRUSTED_PROXY_HOPS);
+      // Without a trusted client IP anonymous callers cannot be told apart; one shared bucket would let a single script lock everyone out.
+      const limitKey = actor ? `m:${actor.memberId}` : ip === 'unknown' ? null : `ip:${ip}`;
+      if (limitKey && !limiter.take(limitKey)) {
         throw new AppError('RATE_LIMITED', 'Too many requests. Please slow down.');
       }
 

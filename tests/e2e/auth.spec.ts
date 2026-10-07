@@ -118,4 +118,42 @@ test.describe('creating and joining', () => {
     await owner.close();
     await guest.close();
   });
+
+  test('signing in as the owner on a new device needs the recovery code', async ({ browser }) => {
+    const owner = await newMemberContext(browser);
+    const op = await owner.newPage();
+    await op.goto('/create');
+    await op.getByLabel('Family or calendar name').fill('Owner Proof Family');
+    await op.getByLabel('Your name').fill('Oybek');
+    await op.getByLabel('Calendar password').fill(PASSWORD);
+    await op.getByLabel('Confirm password').fill(PASSWORD);
+    await op.getByRole('button', { name: 'Create calendar' }).click();
+    await expect(op.getByRole('heading', { name: /is ready/ })).toBeVisible();
+    const code = (await op.locator('.big-code').first().innerText()).trim();
+    const recovery = (await op.locator('.recovery code').innerText()).trim();
+
+    const phone = await newMemberContext(browser);
+    const p = await phone.newPage();
+    await p.goto(`/join?code=${code}`);
+    await p.getByLabel('Your name').fill('Oybek');
+    await p.getByLabel('Calendar password').fill(PASSWORD);
+    await p.getByRole('button', { name: 'Join calendar' }).click();
+    await p.getByRole('dialog', { name: 'Is this you?' }).getByRole('button', { name: /Yes, that/ }).click();
+    const proof = p.getByRole('dialog', { name: 'Sign in as the owner' });
+    await expect(proof).toBeVisible();
+    await proof.getByLabel('Recovery code').fill('AAAA-BBBB-CCCC');
+    await proof.getByRole('button', { name: 'Sign in as owner' }).click();
+    await expect(p.getByRole('alert').filter({ hasText: 'Invalid calendar ID or recovery code' })).toBeVisible();
+    await expect(p).toHaveURL(/\/join/);
+
+    await p.getByRole('button', { name: 'Join calendar' }).click();
+    await p.getByRole('dialog', { name: 'Is this you?' }).getByRole('button', { name: /Yes, that/ }).click();
+    await p.getByRole('dialog', { name: 'Sign in as the owner' }).getByLabel('Recovery code').fill(recovery);
+    await p.getByRole('button', { name: 'Sign in as owner' }).click();
+    await expect(p).toHaveURL(/\/calendar/);
+    await p.getByRole('button', { name: 'Settings' }).click();
+    await expect(p.getByRole('button', { name: 'Delete calendar…' })).toBeVisible(); // owner tools available
+    await owner.close();
+    await phone.close();
+  });
 });

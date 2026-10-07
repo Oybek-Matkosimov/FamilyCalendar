@@ -14,6 +14,8 @@ Use both: the provider's point-in-time recovery for fast, fine-grained restores,
 
 Only the database needs backing up. The app is stateless and the sessions table can be lost safely (everyone just signs in again).
 
+`bash ops/test-backup.sh` checks the script's retention and failure handling with stubbed tools (no database needed).
+
 ## Run a backup by hand
 
 ```bash

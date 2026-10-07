@@ -6,7 +6,7 @@ import { z } from 'zod';
 import type { Db, DbLike } from '@/server/db/client';
 import { calendars, events, idempotencyKeys, members } from '@/server/db/schema';
 import { AppError } from '@/lib/errors';
-import { dayBounds, dayKey } from '@/lib/time';
+import { dayBounds, dayKey, withinSupportedYears } from '@/lib/time';
 import {
   eventInputSchema, eventPatchSchema, parseOrThrow, rangeSchema,
   type EventInput, type EventPatch, type RecurrenceInput,
@@ -98,6 +98,9 @@ function computeTimes(startStr: string, endStr: string, allDay: boolean, tz: str
     if (e <= s) e = s.plus({ days: 1 });
   }
   if (e <= s) throw new AppError('VALIDATION', 'End must be after start');
+  if (!withinSupportedYears(s.toJSDate()) || !withinSupportedYears(e.toJSDate())) {
+    throw new AppError('VALIDATION', 'Choose a date within 30 years of today');
+  }
   if (e.toMillis() - s.toMillis() > MAX_DURATION_MS) throw new AppError('VALIDATION', 'Events can be at most 7 days long');
   return {
     startUtc: s.toUTC().toJSDate(),
@@ -187,6 +190,7 @@ function assertVersion(row: EventRow, version: number) {
 function assertOccurrence(row: EventRow, date: string | undefined) {
   if (!date) throw new AppError('VALIDATION', 'occurrenceDate is required for this occurrence');
   const { start, end } = dayBounds(date, row.tz);
+  if (!withinSupportedYears(start)) throw new AppError('VALIDATION', 'No occurrence of this event on that date');
   const hit = expandSeries(seriesSource(row), start, end, 50).some((o) => o.occurrenceDate === date);
   if (!hit) throw new AppError('VALIDATION', 'No occurrence of this event on that date');
 }
@@ -391,6 +395,21 @@ export async function deleteEvent(
       .set({ deletedAt: new Date(), version: sql`${events.version} + 1`, updatedBy: actor.memberId, updatedAt: new Date() })
       .where(and(eq(events.id, row.id), eq(events.calendarId, actor.calendarId)));
     await writeAudit(tx, { calendarId: actor.calendarId, eventId: row.id, action: 'delete', actorMemberId: actor.memberId, before: snapshot(row) });
+    if (row.rrule) {
+      // Deleting a whole series also removes the dates that were edited individually (they are linked by series_id).
+      const edited = await tx
+        .select()
+        .from(events)
+        .where(and(eq(events.calendarId, actor.calendarId), eq(events.seriesId, row.id), isNull(events.deletedAt)))
+        .for('update');
+      for (const child of edited) {
+        await tx
+          .update(events)
+          .set({ deletedAt: new Date(), version: sql`${events.version} + 1`, updatedBy: actor.memberId, updatedAt: new Date() })
+          .where(and(eq(events.id, child.id), eq(events.calendarId, actor.calendarId)));
+        await writeAudit(tx, { calendarId: actor.calendarId, eventId: child.id, action: 'delete', actorMemberId: actor.memberId, before: snapshot(child) });
+      }
+    }
   });
   await afterDelete(db, actor.calendarId, id);
 }

@@ -13,8 +13,9 @@ export async function assertNotLocked(db: Db, keys: string[]): Promise<void> {
 }
 
 /**
- * Atomically count a failure per key. After `max` failures inside a 15 minute window the key locks with
- * exponential backoff (1 min, 2 min, 4 min ... capped at 1 hour).
+ * Atomically count a failure per key. After `max` failures the key locks with exponential backoff (1 min, 2 min,
+ * 4 min ... capped at 1 hour). The count is forgotten only after 15 quiet minutes: `window_start` is the time of the
+ * most recent failure, so someone who keeps guessing keeps escalating instead of getting a fresh start.
  */
 export async function recordFailure(db: Db, keys: string[], opts: { max?: number } = {}): Promise<void> {
   const max = opts.max ?? 5;
@@ -24,10 +25,10 @@ export async function recordFailure(db: Db, keys: string[], opts: { max?: number
       values (${key}, 1, now())
       on conflict (key) do update set
         failures = case when auth_attempts.window_start < now() - interval '15 minutes' then 1 else auth_attempts.failures + 1 end,
-        window_start = case when auth_attempts.window_start < now() - interval '15 minutes' then now() else auth_attempts.window_start end,
+        window_start = now(),
         locked_until = case
           when (case when auth_attempts.window_start < now() - interval '15 minutes' then 1 else auth_attempts.failures + 1 end) >= ${max}::int
-          then now() + least(interval '1 hour', interval '1 minute' * power(2, (case when auth_attempts.window_start < now() - interval '15 minutes' then 1 else auth_attempts.failures + 1 end) - ${max}::int))
+          then now() + least(interval '1 hour', interval '1 minute' * least(power(2, (case when auth_attempts.window_start < now() - interval '15 minutes' then 1 else auth_attempts.failures + 1 end) - ${max}::int), 64))
           else auth_attempts.locked_until end
     `);
   }

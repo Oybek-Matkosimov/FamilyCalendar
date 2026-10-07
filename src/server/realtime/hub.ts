@@ -9,7 +9,15 @@ export interface Change {
 type Listener = (c: Change) => void;
 
 const CHANNEL = 'calendar_changes';
-const listeners = new Map<string, Set<Listener>>();
+
+// Shared through globalThis: with hot reloading (and multiple route bundles) this module can be evaluated more than
+// once in one process. The listener registry must be the same object everywhere or subscribers stop hearing changes.
+const g = globalThis as unknown as {
+  __fcHub?: Promise<{ stop(): Promise<void> }>;
+  __fcListeners?: Map<string, Set<Listener>>;
+  __fcStreams?: Map<string, Set<() => void>>;
+};
+const listeners = (g.__fcListeners ??= new Map<string, Set<Listener>>());
 
 export function subscribe(calendarId: string, cb: Listener): () => void {
   let set = listeners.get(calendarId);
@@ -59,8 +67,6 @@ export async function startHub(url: string): Promise<{ stop(): Promise<void> }> 
   };
 }
 
-const g = globalThis as unknown as { __fcHub?: Promise<{ stop(): Promise<void> }> };
-
 /** Lazily start the process-wide hub; retries on the next call if the database was unavailable. */
 export function ensureHub(): Promise<{ stop(): Promise<void> }> {
   if (!g.__fcHub) {
@@ -74,7 +80,7 @@ export function ensureHub(): Promise<{ stop(): Promise<void> }> {
 
 // ---- per-member stream cap (a runaway client cannot hold unlimited connections) ----
 const MAX_STREAMS_PER_MEMBER = 20;
-const streams = new Map<string, Set<() => void>>();
+const streams = (g.__fcStreams ??= new Map<string, Set<() => void>>());
 
 export function registerStream(memberId: string, close: () => void): () => void {
   let set = streams.get(memberId);

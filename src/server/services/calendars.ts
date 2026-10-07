@@ -1,5 +1,5 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
-import type { Db } from '@/server/db/client';
+import type { Db, DbLike } from '@/server/db/client';
 import { calendars, members, invites } from '@/server/db/schema';
 import { AppError } from '@/lib/errors';
 import {
@@ -42,8 +42,9 @@ async function nextColor(tx: Tx | Db, calendarId: string): Promise<string> {
 }
 
 export async function createCalendar(db: Db, input: CreateCalendarInput, ctx: RequestCtx) {
-  const createKey = `create:${ctx.ip}`;
-  await assertNotLocked(db, [createKey]);
+  // Without a known client IP there is no fair per-visitor bucket, so creation is not throttled by IP.
+  const createKeys = ctx.ip === 'unknown' ? [] : [`create:${ctx.ip}`];
+  if (createKeys.length) await assertNotLocked(db, createKeys);
   const familyName = cleanText(input.familyName);
   const memberName = cleanText(input.memberName);
   const passwordHash = await hashPassword(input.password);
@@ -68,7 +69,7 @@ export async function createCalendar(db: Db, input: CreateCalendarInput, ctx: Re
     return { calendar: { ...cal, ownerMemberId: mem!.id }, member: mem! };
   });
   const session = await createSession(db, calendar.id, member.id, ctx.ua);
-  await recordFailure(db, [createKey], { max: 10 }); // counts creations per IP
+  if (createKeys.length) await recordFailure(db, createKeys, { max: 10 }); // counts creations per IP
   return {
     calendar: toCalendarDTO(calendar), member: toMemberDTO(member), recoveryCode,
     sessionToken: session.token, sessionExpiresAt: session.expiresAt,
@@ -76,7 +77,7 @@ export async function createCalendar(db: Db, input: CreateCalendarInput, ctx: Re
 }
 
 export interface JoinResult {
-  status: 'joined' | 'needs_confirmation';
+  status: 'joined' | 'needs_confirmation' | 'needs_owner_proof';
   calendar?: CalendarDTO; member?: MemberDTO; sessionToken?: string; sessionExpiresAt?: Date;
 }
 
@@ -99,33 +100,56 @@ export async function joinCalendar(db: Db, input: JoinInput, ctx: RequestCtx): P
 
   const name = cleanText(input.memberName);
   const key = nameKey(name);
+  const findActive = (q: DbLike) =>
+    q.select().from(members).where(and(eq(members.calendarId, cal.id), eq(members.nameKey, key), isNull(members.removedAt))).limit(1);
+  const inviteValid = and(
+    eq(invites.calendarId, cal.id), isNull(invites.revokedAt),
+    sql`${invites.expiresAt} > now()`, sql`(${invites.maxUses} is null or ${invites.uses} < ${invites.maxUses})`,
+  );
+  const inviteHash = input.inviteToken ? hashToken(input.inviteToken) : null;
+
+  // The shared password lets anyone sign in as an ordinary member, but not as the owner: that also needs the
+  // recovery code, otherwise any member could take over the calendar (change the password, delete everything).
+  const [current] = await findActive(db);
+  if (current?.role === 'owner' && input.confirmExisting) {
+    if (!input.recoveryCode) return { status: 'needs_owner_proof' };
+    const recKeys = [`rec:${input.code}`, ...ipKeys(ctx.ip)];
+    await assertNotLocked(db, recKeys);
+    if (!(await verifyPassword(cal.recoveryHash, input.recoveryCode.trim().toUpperCase()))) {
+      await recordFailure(db, recKeys);
+      throw new AppError('UNAUTHENTICATED', 'Invalid calendar ID or recovery code');
+    }
+    await clearFailures(db, [`rec:${input.code}`]);
+  }
 
   const outcome = await db.transaction(async (tx) => {
-    if (input.inviteToken) {
-      const used = await tx
-        .update(invites)
-        .set({ uses: sql`${invites.uses} + 1` })
-        .where(and(
-          eq(invites.tokenHash, hashToken(input.inviteToken)), eq(invites.calendarId, cal.id), isNull(invites.revokedAt),
-          sql`${invites.expiresAt} > now()`, sql`(${invites.maxUses} is null or ${invites.uses} < ${invites.maxUses})`,
-        ))
-        .returning({ id: invites.id });
-      if (used.length === 0) throw new AppError('NOT_FOUND', 'Invite not found or expired');
+    if (inviteHash) {
+      // Checked up front but only consumed if a NEW person actually joins (not for "Is this you?" or re-sign-ins).
+      const [inv] = await tx.select({ id: invites.id }).from(invites).where(and(eq(invites.tokenHash, inviteHash), inviteValid)).limit(1);
+      if (!inv) throw new AppError('NOT_FOUND', 'Invite not found or expired');
     }
-    const findActive = () =>
-      tx.select().from(members).where(and(eq(members.calendarId, cal.id), eq(members.nameKey, key), isNull(members.removedAt))).limit(1);
-    let [existing] = await findActive();
+    let [existing] = await findActive(tx);
     if (existing) return input.confirmExisting ? { member: existing } : { confirm: true as const };
     const [created] = await tx
       .insert(members)
       .values({ calendarId: cal.id, name, nameKey: key, role: 'member', color: await nextColor(tx, cal.id) })
       .onConflictDoNothing()
       .returning();
-    if (created) return { member: created, created: true as const };
-    // Lost a race with a concurrent join of the same name.
-    [existing] = await findActive();
-    if (!existing) throw new AppError('UNAVAILABLE', 'Could not join. Please try again.');
-    return input.confirmExisting ? { member: existing } : { confirm: true as const };
+    if (!created) {
+      // Lost a race with a concurrent join of the same name.
+      [existing] = await findActive(tx);
+      if (!existing) throw new AppError('UNAVAILABLE', 'Could not join. Please try again.');
+      return input.confirmExisting ? { member: existing } : { confirm: true as const };
+    }
+    if (inviteHash) {
+      const used = await tx
+        .update(invites)
+        .set({ uses: sql`${invites.uses} + 1` })
+        .where(and(eq(invites.tokenHash, inviteHash), inviteValid))
+        .returning({ id: invites.id });
+      if (used.length === 0) throw new AppError('NOT_FOUND', 'Invite not found or expired'); // rolls the new member back
+    }
+    return { member: created, created: true as const };
   });
 
   if ('confirm' in outcome) return { status: 'needs_confirmation' };

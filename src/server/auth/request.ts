@@ -23,12 +23,16 @@ export function clearedCookie(): string {
   return `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${secure()}`;
 }
 
-/** Client IP. Only trusts X-Forwarded-For when TRUST_PROXY=true (i.e. behind a proxy that sets it). */
-export function clientIp(req: Request, trustProxy: boolean): string {
+/**
+ * Client IP. X-Forwarded-For is only used when TRUST_PROXY=true. Each trusted proxy appends the address it saw, so
+ * the entries we can believe are the right-most ones: with `hops` trusted proxies the client is `hops` from the right.
+ * Anything to its left was supplied by the client and is ignored (it can be forged to dodge rate limits).
+ */
+export function clientIp(req: Request, trustProxy: boolean, hops = 1): string {
   if (trustProxy) {
-    const xff = req.headers.get('x-forwarded-for');
-    const first = xff?.split(',')[0]?.trim();
-    if (first) return first;
+    const parts = (req.headers.get('x-forwarded-for') ?? '').split(',').map((p) => p.trim()).filter(Boolean);
+    const ip = parts[Math.max(0, parts.length - hops)];
+    if (ip) return ip;
   }
   return 'unknown';
 }

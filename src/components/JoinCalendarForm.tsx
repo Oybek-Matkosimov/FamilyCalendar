@@ -19,6 +19,8 @@ export function JoinCalendarForm() {
   const [formError, setFormError] = useState('');
   const [pending, setPending] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [proofOpen, setProofOpen] = useState(false);
+  const [recoveryCode, setRecoveryCode] = useState('');
 
   useEffect(() => {
     if (!invite) return;
@@ -30,22 +32,28 @@ export function JoinCalendarForm() {
     return () => { cancelled = true; };
   }, [invite]);
 
-  async function submit(confirmExisting: boolean) {
+  async function submit(confirmExisting: boolean, proof?: string) {
     if (pending) return;
     setPending(true);
     setFormError('');
     try {
-      const r = await apiFetch<{ status: 'joined' | 'needs_confirmation' }>('/api/auth/join', {
+      const r = await apiFetch<{ status: 'joined' | 'needs_confirmation' | 'needs_owner_proof' }>('/api/auth/join', {
         method: 'POST',
-        body: { code, memberName, password, confirmExisting: confirmExisting || undefined, inviteToken: invite },
+        body: { code, memberName, password, confirmExisting: confirmExisting || undefined, inviteToken: invite, recoveryCode: proof || undefined },
       });
       if (r.status === 'needs_confirmation') {
         setConfirmOpen(true);
         return;
       }
+      if (r.status === 'needs_owner_proof') {
+        setConfirmOpen(false);
+        setProofOpen(true);
+        return;
+      }
       router.push('/calendar');
     } catch (err) {
       setConfirmOpen(false);
+      setProofOpen(false);
       if (err instanceof ApiError && err.code === 'RATE_LIMITED') {
         setFormError('Too many attempts. Wait a few minutes, then try again.');
       } else {
@@ -83,6 +91,16 @@ export function JoinCalendarForm() {
         <PasswordField label="Calendar password" value={password} onChange={(e) => setPassword(e.target.value)} error={errors.password} autoComplete="current-password" />
         <button type="submit" className="btn btn-primary btn-big" disabled={pending}>{pending ? 'Joining…' : 'Join calendar'}</button>
       </form>
+
+      <Dialog open={proofOpen} title="Sign in as the owner" onClose={() => setProofOpen(false)} locked={pending}>
+        <p><b>{memberName.trim()}</b> is the calendar owner. To sign in as the owner on a new device, enter the recovery code you saved when the calendar was created.</p>
+        <TextField label="Recovery code" value={recoveryCode} onChange={(e) => setRecoveryCode(e.target.value.toUpperCase())} autoComplete="off" placeholder="XXXX-XXXX-XXXX" />
+        <p className="hint">Not the owner? Close this and join with a different name.</p>
+        <div className="dlg-foot">
+          <button type="button" className="btn" onClick={() => setProofOpen(false)} disabled={pending}>Use a different name</button>
+          <button type="button" className="btn btn-primary" onClick={() => void submit(true, recoveryCode)} disabled={pending || recoveryCode.trim().length < 8}>Sign in as owner</button>
+        </div>
+      </Dialog>
 
       <Dialog open={confirmOpen} title="Is this you?" onClose={() => setConfirmOpen(false)} locked={pending}>
         <p>A member named <b>{memberName.trim()}</b> is already on this calendar. If that is you on another device, continue as them.</p>

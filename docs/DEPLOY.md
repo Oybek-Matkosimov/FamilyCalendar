@@ -8,7 +8,8 @@ The app is one Node.js process (Next.js) plus PostgreSQL. It needs a **long-runn
 |---|---|---|
 | `DATABASE_URL` | yes | PostgreSQL connection string, e.g. `postgres://user:pass@host:5432/familycal`. Use `?sslmode=require` for managed databases that need TLS. |
 | `APP_ORIGIN` | yes | The public address people use, **with https**, e.g. `https://calendar.example.com`. The app refuses to start in production with an http address. It is also what blocks cross-site form posts. |
-| `TRUST_PROXY` | behind a proxy: yes | Set `true` when a reverse proxy / platform router sets `X-Forwarded-For` (Caddy, Railway, Fly, Render, nginx…). Without it the app cannot tell visitors apart, so per-IP rate limits are skipped (per-calendar lockout still works). Never set it when the app is reachable directly from the internet. |
+| `TRUST_PROXY` | behind a proxy: yes | Set `true` when a reverse proxy / platform router appends the client address to `X-Forwarded-For` (Caddy, Railway, Fly, Render, nginx…). Without it the app cannot tell visitors apart, so per-IP limits (anonymous API rate limit, calendar-creation limit, per-IP login lockout) are **skipped**; the per-calendar lockout and per-member limits still apply. Never set it when the app is reachable directly from the internet. |
+| `TRUSTED_PROXY_HOPS` | optional (default `1`) | How many trusted proxies sit in front of the app. The client address is taken that many entries from the **right** of `X-Forwarded-For`; anything further left is client-supplied and ignored. Use `1` for Caddy/Railway/Render/Fly, `2` if you also use a CDN such as Cloudflare in front of the platform. A wrong value makes everyone share one address, or lets visitors forge theirs. |
 | `AUTO_MIGRATE` | optional | `true` applies pending migrations when the server starts. Safe with several instances (advisory lock). Convenient for a single-service host. |
 | `LOG_LEVEL` | optional | `debug`, `info` (default), `warn`, `error`. |
 | `PORT` / `HOSTNAME` | optional | Default `3000` / `0.0.0.0` in the Docker image. |
@@ -23,7 +24,7 @@ Secrets live only in environment variables. Nothing secret is bundled into brows
    - If you would rather run migrations as a separate release step, leave `AUTO_MIGRATE` unset and run the image built from the `migrate` target as the release command (`npx tsx src/server/db/migrate.ts`).
 4. Health check path: `/api/health` (returns 200 `{"ok":true}`, or 503 when the database is unreachable).
 5. Add your domain; the platform terminates HTTPS. Keep a single instance to start with. More are fine: live updates fan out through PostgreSQL, not process memory.
-6. Add the nightly dump as a scheduled job (platform cron or a second small service running `ops/backup.sh` with `S3_BUCKET` set) in addition to the database's own backups. See `ops/RESTORE.md`.
+6. Add the nightly dump as a scheduled job (platform cron or a second small service running `ops/backup.sh` with `S3_BUCKET` set; it needs `pg_dump` and the `aws` CLI, see `ops/backup.Dockerfile`) in addition to the database's own backups. See `ops/RESTORE.md`.
 
 ## Option B: your own server with Docker Compose
 

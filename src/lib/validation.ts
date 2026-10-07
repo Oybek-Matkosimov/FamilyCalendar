@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { isValidTimezone } from './time';
+import { isValidTimezone, withinSupportedYears } from './time';
 import { AppError } from './errors';
 
+// C0/C1 control characters plus invisible formatting characters (zero-width space/joiners, bidi overrides, BOM, word joiner)
 // eslint-disable-next-line no-control-regex
-const CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g;
+const CTRL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F​-‏‪-‮⁠-⁤﻿]/g;
 
 export const cleanText = (s: string): string => s.normalize('NFC').replace(CTRL, '').trim();
 export const nameKey = (s: string): string => cleanText(s).normalize('NFKC').toLowerCase().replace(/\s+/g, ' ');
@@ -33,6 +34,8 @@ export const joinSchema = z.object({
   password: z.string().min(1).max(128),
   confirmExisting: z.boolean().optional(),
   inviteToken: z.string().max(200).optional(),
+  /** Needed to sign in as the calendar owner on a new device. */
+  recoveryCode: z.string().max(32).optional(),
 });
 export type JoinInput = z.infer<typeof joinSchema>;
 
@@ -70,7 +73,8 @@ export type EventPatch = z.infer<typeof eventPatchSchema>;
 
 export const rangeSchema = z
   .object({ from: z.coerce.date(), to: z.coerce.date() })
-  .refine((r) => r.from < r.to && r.to.getTime() - r.from.getTime() <= 366 * 86400000, 'Invalid range (max 366 days)');
+  .refine((r) => r.from < r.to && r.to.getTime() - r.from.getTime() <= 366 * 86400000, 'Invalid range (max 366 days)')
+  .refine((r) => withinSupportedYears(r.from) && withinSupportedYears(r.to), 'Date range is outside the supported years');
 
 export const updateCalendarSchema = z.object({
   name: text(60).optional(),

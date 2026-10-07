@@ -18,6 +18,9 @@ import { buildRRule, expandSeries, type SeriesSource } from '@/lib/recurrence';
 import { authorize, type Actor } from '@/server/authz/policy';
 import { listHistory, writeAudit, type HistoryEntry } from './audit';
 import { buildConflictDTOs, type ConflictDTO, type MemberName } from './conflicts';
+import { emitDomainEvent, type DomainEventName } from '@/server/events-bus';
+import { publishChange } from '@/server/realtime/notify';
+import { logger } from '@/server/logger';
 
 type EventRow = typeof events.$inferSelect;
 
@@ -183,6 +186,29 @@ function assertOccurrence(row: EventRow, date: string | undefined) {
   if (!hit) throw new AppError('VALIDATION', 'No occurrence of this event on that date');
 }
 
+// ---------- post-commit side effects ----------
+
+/** Runs after the transaction committed; never throws (notifications must not fail a saved change). */
+async function afterWrite(db: Db, calendarId: string, dto: OccurrenceDTO, name: DomainEventName): Promise<void> {
+  try {
+    emitDomainEvent(name, { calendarId, eventId: dto.eventId });
+    await publishChange(db, calendarId, { type: 'event', id: dto.eventId });
+    const from = dto.isRecurring ? new Date() : new Date(dto.start);
+    const to = dto.isRecurring ? new Date(from.getTime() + 60 * 86400000) : new Date(dto.end);
+    const { groups } = await loadRange(db, calendarId, from, to);
+    if (groups.some((g) => g.occurrences.some((o) => o.eventId === dto.eventId))) {
+      emitDomainEvent('conflict.detected', { calendarId, eventId: dto.eventId });
+    }
+  } catch (err) {
+    logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'post-commit event side effects failed');
+  }
+}
+
+async function afterDelete(db: Db, calendarId: string, eventId: string): Promise<void> {
+  emitDomainEvent('event.deleted', { calendarId, eventId });
+  await publishChange(db, calendarId, { type: 'event', id: eventId });
+}
+
 // ---------- create ----------
 
 export async function createEvent(db: Db, actor: Actor, rawInput: EventInput, idempotencyKey?: string): Promise<OccurrenceDTO> {
@@ -191,7 +217,7 @@ export async function createEvent(db: Db, actor: Actor, rawInput: EventInput, id
   const key = idempotencyKey === undefined ? undefined : parseOrThrow(z.string().min(1).max(100), idempotencyKey);
   const requestHash = sha256(JSON.stringify(input));
 
-  return db.transaction(async (tx) => {
+  const { dto: created, replay } = await db.transaction(async (tx) => {
     if (key) {
       const claimed = await tx
         .insert(idempotencyKeys)
@@ -206,7 +232,7 @@ export async function createEvent(db: Db, actor: Actor, rawInput: EventInput, id
         if (!existing || existing.requestHash !== requestHash) {
           throw new AppError('CONFLICT', 'Idempotency key reuse with different data');
         }
-        if (existing.response) return existing.response as OccurrenceDTO;
+        if (existing.response) return { dto: existing.response as OccurrenceDTO, replay: true };
         throw new AppError('CONFLICT', 'This request is already being processed');
       }
       if (Math.random() < 0.01) {
@@ -236,15 +262,17 @@ export async function createEvent(db: Db, actor: Actor, rawInput: EventInput, id
         .set({ response: dto })
         .where(and(eq(idempotencyKeys.key, key), eq(idempotencyKeys.calendarId, actor.calendarId)));
     }
-    return dto;
+    return { dto, replay: false };
   });
+  if (!replay) await afterWrite(db, actor.calendarId, created, 'event.created');
+  return created;
 }
 
 // ---------- update ----------
 
 export async function updateEvent(db: Db, actor: Actor, id: string, rawPatch: EventPatch): Promise<OccurrenceDTO> {
   const patch = parseOrThrow(eventPatchSchema, rawPatch);
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const cal = await loadCalendar(tx, actor.calendarId);
     const row = await lockEvent(tx, actor.calendarId, id);
     authorize(actor, 'event.update', { settings: cal.settings, event: row });
@@ -322,6 +350,8 @@ export async function updateEvent(db: Db, actor: Actor, id: string, rawPatch: Ev
     });
     return dtoFor(tx, updated!);
   });
+  await afterWrite(db, actor.calendarId, result, 'event.updated');
+  return result;
 }
 
 // ---------- delete / restore ----------
@@ -357,11 +387,12 @@ export async function deleteEvent(
       .where(and(eq(events.id, row.id), eq(events.calendarId, actor.calendarId)));
     await writeAudit(tx, { calendarId: actor.calendarId, eventId: row.id, action: 'delete', actorMemberId: actor.memberId, before: snapshot(row) });
   });
+  await afterDelete(db, actor.calendarId, id);
 }
 
 export async function restoreEvent(db: Db, actor: Actor, id: string): Promise<OccurrenceDTO> {
   authorize(actor, 'event.restore');
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const row = await lockEvent(tx, actor.calendarId, id, { deleted: true });
     const [restored] = await tx
       .update(events)
@@ -371,6 +402,8 @@ export async function restoreEvent(db: Db, actor: Actor, id: string): Promise<Oc
     await writeAudit(tx, { calendarId: actor.calendarId, eventId: row.id, action: 'restore', actorMemberId: actor.memberId, after: snapshot(restored!) });
     return dtoFor(tx, restored!);
   });
+  await afterWrite(db, actor.calendarId, result, 'event.updated');
+  return result;
 }
 
 // ---------- reading ----------

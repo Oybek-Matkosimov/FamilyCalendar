@@ -4,6 +4,7 @@ import { events, members } from '@/server/db/schema';
 import { AppError } from '@/lib/errors';
 import { authorize, type Actor } from '@/server/authz/policy';
 import { revokeMemberSessions } from '@/server/auth/session';
+import { publishChange } from '@/server/realtime/notify';
 import { writeAudit } from './audit';
 import { toMemberDTO, type MemberDTO } from './calendars';
 
@@ -69,4 +70,6 @@ export async function removeMember(db: Db, actor: Actor, memberId: string, opts:
     await tx.update(members).set({ removedAt: new Date() }).where(eq(members.id, memberId));
     await revokeMemberSessions(tx as unknown as Db, memberId);
   });
+  await publishChange(db, actor.calendarId, { type: 'member' });
+  if (opts.eventsPolicy !== 'keep') await publishChange(db, actor.calendarId, { type: 'event' });
 }

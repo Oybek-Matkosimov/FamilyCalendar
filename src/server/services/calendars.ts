@@ -11,6 +11,7 @@ import { hashToken, newCalendarCode, newRecoveryCode } from '@/server/auth/token
 import { assertNotLocked, clearFailures, recordFailure } from '@/server/auth/lockout';
 import { createSession, revokeCalendarSessions } from '@/server/auth/session';
 import { authorize, type Actor } from '@/server/authz/policy';
+import { publishChange } from '@/server/realtime/notify';
 
 export interface MemberDTO { id: string; name: string; role: 'owner' | 'member'; color: string; lastActiveAt: string | null }
 export interface CalendarDTO {
@@ -117,7 +118,7 @@ export async function joinCalendar(db: Db, input: JoinInput, ctx: RequestCtx): P
       .values({ calendarId: cal.id, name, nameKey: key, role: 'member', color: await nextColor(tx, cal.id) })
       .onConflictDoNothing()
       .returning();
-    if (created) return { member: created };
+    if (created) return { member: created, created: true as const };
     // Lost a race with a concurrent join of the same name.
     [existing] = await findActive();
     if (!existing) throw new AppError('UNAVAILABLE', 'Could not join. Please try again.');
@@ -125,6 +126,7 @@ export async function joinCalendar(db: Db, input: JoinInput, ctx: RequestCtx): P
   });
 
   if ('confirm' in outcome) return { status: 'needs_confirmation' };
+  if ('created' in outcome) await publishChange(db, cal.id, { type: 'member' });
   const session = await createSession(db, cal.id, outcome.member.id, ctx.ua);
   return {
     status: 'joined', calendar: toCalendarDTO(cal), member: toMemberDTO(outcome.member),
@@ -142,7 +144,7 @@ export async function getCalendar(db: Db, actor: Actor): Promise<CalendarDTO & {
 export async function updateCalendar(db: Db, actor: Actor, patch: UpdateCalendarInput): Promise<CalendarDTO> {
   authorize(actor, 'calendar.update');
   const p = parseOrThrow(updateCalendarSchema, patch);
-  return db.transaction(async (tx) => {
+  const updated = await db.transaction(async (tx) => {
     const [cur] = await tx.select().from(calendars).where(eq(calendars.id, actor.calendarId)).for('update');
     if (!cur) throw new AppError('NOT_FOUND', 'Calendar not found');
     const [row] = await tx
@@ -157,6 +159,8 @@ export async function updateCalendar(db: Db, actor: Actor, patch: UpdateCalendar
       .returning();
     return toCalendarDTO(row!);
   });
+  await publishChange(db, actor.calendarId, { type: 'calendar' });
+  return updated;
 }
 
 export async function changePassword(db: Db, actor: Actor, current: string, next: string, keepToken?: string): Promise<void> {
@@ -211,4 +215,5 @@ export async function deleteCalendar(db: Db, actor: Actor, confirmName: string):
   if (!cal) throw new AppError('NOT_FOUND', 'Calendar not found');
   if (cleanText(confirmName) !== cal.name) throw new AppError('VALIDATION', 'Type the calendar name exactly to confirm deletion');
   await db.delete(calendars).where(eq(calendars.id, actor.calendarId));
+  await publishChange(db, actor.calendarId, { type: 'deleted' });
 }

@@ -17,3 +17,6 @@ function shared() {
 }
 export const getDb = (): Db => shared().db;
 export const getSql = (): Sql => shared().sql;
+
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0];
+export type DbLike = Db | Tx;

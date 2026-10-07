@@ -92,3 +92,15 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, data: unknown): T {
   if (!r.success) throw new AppError('VALIDATION', r.error.issues.map((i) => `${i.path.join('.') || 'input'}: ${i.message}`).join('; '));
   return r.data;
 }
+
+export const createInviteSchema = z.object({
+  expiresInHours: z.number().int().min(1).max(720).optional(),
+  maxUses: z.number().int().min(1).max(100).nullable().optional(),
+});
+export type CreateInviteInput = z.infer<typeof createInviteSchema>;
+
+export const removeMemberQuerySchema = z
+  .object({ events: z.enum(['keep', 'delete', 'reassign']).default('keep'), to: z.string().uuid().optional() })
+  .refine((q) => q.events !== 'reassign' || !!q.to, { message: 'to is required when events=reassign', path: ['to'] });
+
+export const joinInfoQuerySchema = z.object({ token: z.string().min(1).max(200) });

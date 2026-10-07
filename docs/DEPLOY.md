@@ -65,3 +65,4 @@ This starts PostgreSQL, applies migrations, starts the app, puts Caddy in front 
 - Notifications (email, SMS, push) are not implemented. The domain event bus in `src/server/events-bus.ts` is where reminders will plug in.
 - Restoring a deleted event has an API (`POST /api/events/:id/restore`, owner only) but no button yet.
 - "This and all following events" for repeating events is not supported; edit one occurrence or the whole series.
+- `npm audit` reports advisories in PostCSS bundled with Next.js 15 (they concern processing attacker-supplied CSS at build time; this app only builds its own CSS). The fix needs a major Next.js upgrade; plan one when convenient and re-run the audit.

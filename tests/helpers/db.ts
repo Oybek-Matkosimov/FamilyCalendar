@@ -1,20 +1,21 @@
 import EmbeddedPostgres from 'embedded-postgres';
 import postgres from 'postgres';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 let server: EmbeddedPostgres | undefined;
 let starting: Promise<number> | undefined;
+let dataDir: string | undefined;
 
 async function ensureServer(): Promise<number> {
   if (process.env.TEST_DATABASE_URL_BASE) return 0;
   starting ??= (async () => {
     const port = 54000 + Math.floor(Math.random() * 1000);
     server = new EmbeddedPostgres({
-      databaseDir: mkdtempSync(join(tmpdir(), 'fc-pg-')),
-      user: 'postgres', password: 'postgres', port, persistent: false,
+      databaseDir: (dataDir = mkdtempSync(join(tmpdir(), 'fc-pg-'))),
+      user: 'postgres', password: 'postgres', port, persistent: true,
       onLog: () => {}, onError: () => {},
     });
     await server.initialise();
@@ -36,8 +37,10 @@ export async function createTestDb() {
 
 export async function stopTestServer() {
   if (server) {
-    await server.stop();
+    await server.stop().catch(() => {});
     server = undefined;
     starting = undefined;
+    // Windows may briefly hold file locks after shutdown; cleanup is best-effort.
+    try { if (dataDir) rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch { /* ignore */ }
   }
 }

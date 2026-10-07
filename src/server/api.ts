@@ -6,6 +6,15 @@ import { logger } from './logger';
 import { clearedCookie, clientIp, readSessionToken, sessionCookie } from './auth/request';
 import { resolveSession } from './auth/session';
 import type { Actor } from './authz/policy';
+import { createLimiter } from './rate-limit';
+
+let clock: () => number = Date.now;
+const limiter = createLimiter({ capacity: 120, refillPerSec: 2, now: () => clock() });
+/** Test hooks. */
+export function resetRateLimits(now?: () => number): void {
+  limiter.reset();
+  clock = now ?? Date.now;
+}
 
 export interface ApiResult {
   status?: number;
@@ -37,6 +46,10 @@ export function api<T = undefined>(
       const token = readSessionToken(req);
       const actor = token ? await resolveSession(db, token) : null;
       if (opts.auth && !actor) throw new AppError('UNAUTHENTICATED', 'Please sign in');
+      const ip = clientIp(req, env.TRUST_PROXY);
+      if (!limiter.take(actor ? `m:${actor.memberId}` : `ip:${ip}`)) {
+        throw new AppError('RATE_LIMITED', 'Too many requests. Please slow down.');
+      }
 
       let body = undefined as T;
       if (opts.schema) {
@@ -61,7 +74,7 @@ export function api<T = undefined>(
         body = r.data;
       }
       const params = ctx?.params ? await ctx.params : {};
-      const out = await fn({ req, actor, token, body, db, ip: clientIp(req, env.TRUST_PROXY), params });
+      const out = await fn({ req, actor, token, body, db, ip, params });
       const headers = new Headers({ 'content-type': 'application/json', 'cache-control': 'no-store' });
       if (out.setSession) headers.append('set-cookie', sessionCookie(out.setSession.token, out.setSession.expires));
       if (out.clearSession) headers.append('set-cookie', clearedCookie());

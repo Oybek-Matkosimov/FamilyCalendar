@@ -35,6 +35,9 @@ export interface OccurrenceDTO {
   start: string;
   end: string;
   allDay: boolean;
+  /** Wall-clock start/end of the event (first occurrence for a series) in the calendar timezone, 'YYYY-MM-DDTHH:mm' */
+  localStart: string;
+  localEnd: string;
   occurrenceDate: string;
   isRecurring: boolean;
   seriesId: string | null;
@@ -147,6 +150,8 @@ function toDTO(
     start: occ.start.toISOString(),
     end: occ.end.toISOString(),
     allDay: row.allDay,
+    localStart: row.localStart ? normLocal(row.localStart) : '',
+    localEnd: row.localEnd ? normLocal(row.localEnd) : '',
     occurrenceDate: occ.occurrenceDate,
     isRecurring: row.rrule !== null,
     seriesId: row.seriesId,

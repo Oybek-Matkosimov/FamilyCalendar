@@ -6,25 +6,14 @@ import { ApiError, apiFetch } from '@/lib/client/api';
 import { PasswordField, SelectField, TextField } from '@/components/ui/Field';
 import { RecoveryCodePanel } from '@/components/RecoveryCodePanel';
 import { useToast } from '@/components/ui/Toast';
+import { timezones } from '@/lib/client/timezones';
 
 interface Created { calendar: { code: string; name: string }; recoveryCode: string }
-
-function timezones(): { all: string[]; current: string } {
-  let all: string[] = [];
-  try {
-    all = (Intl as unknown as { supportedValuesOf(k: string): string[] }).supportedValuesOf('timeZone');
-  } catch {
-    all = [];
-  }
-  const current = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
-  const set = new Set([...all, current, 'UTC']);
-  return { all: [...set].sort(), current };
-}
 
 export function CreateCalendarForm() {
   const router = useRouter();
   const toast = useToast();
-  const tz = useMemo(timezones, []);
+  const tz = useMemo(() => timezones(), []);
   const [familyName, setFamilyName] = useState('');
   const [memberName, setMemberName] = useState('');
   const [password, setPassword] = useState('');

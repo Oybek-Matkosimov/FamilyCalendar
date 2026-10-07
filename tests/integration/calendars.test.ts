@@ -57,6 +57,15 @@ describe('joinCalendar', () => {
     await expect(joinCalendar(db, { code: f.code, memberName: 'X', password: PASSWORD }, { ip: randomIp() }))
       .rejects.toMatchObject({ code: 'RATE_LIMITED' });
   });
+  it('without a known client IP, failures lock only the targeted calendar, not everyone', async () => {
+    const a = await makeFamily(db); const b = await makeFamily(db);
+    for (let i = 0; i < 5; i++) {
+      await expect(joinCalendar(db, { code: a.code, memberName: 'X', password: 'wrong-pass' }, { ip: 'unknown' })).rejects.toMatchObject(GENERIC);
+    }
+    await expect(joinCalendar(db, { code: a.code, memberName: 'X', password: PASSWORD }, { ip: 'unknown' })).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    const ok = await joinCalendar(db, { code: b.code, memberName: 'Mom', password: PASSWORD }, { ip: 'unknown' });
+    expect(ok.status).toBe('joined');
+  });
   it('asks for confirmation when the name exists (case-insensitive) and does not create a duplicate', async () => {
     const f = await makeFamily(db);
     await joinAs(db, f.code, 'Mom');

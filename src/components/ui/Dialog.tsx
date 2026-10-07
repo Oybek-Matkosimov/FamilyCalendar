@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 
 interface Props {
   open: boolean;
@@ -16,7 +16,7 @@ interface Props {
 /** Accessible modal built on the native <dialog>: focus trap, Escape to close, restores focus on close. */
 export function Dialog({ open, title, onClose, children, sheet, locked }: Props) {
   const ref = useRef<HTMLDialogElement>(null);
-  const titleId = useRef(`dlg-${Math.random().toString(36).slice(2)}`).current;
+  const titleId = useId();
 
   useEffect(() => {
     const d = ref.current;

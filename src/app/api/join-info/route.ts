@@ -7,12 +7,12 @@ import { AppError } from '@/lib/errors';
 export const runtime = 'nodejs';
 
 export const GET = api({ auth: false, schema: joinInfoQuerySchema }, async ({ db, body, ip }) => {
-  const key = `invite:${ip}`;
-  await assertNotLocked(db, [key]);
+  const keys = ip === 'unknown' ? [] : [`invite:${ip}`];
+  if (keys.length) await assertNotLocked(db, keys);
   try {
     return { body: await getJoinInfo(db, body.token) };
   } catch (e) {
-    if (e instanceof AppError && e.code === 'NOT_FOUND') await recordFailure(db, [key], { max: 20 });
+    if (keys.length && e instanceof AppError && e.code === 'NOT_FOUND') await recordFailure(db, keys, { max: 20 });
     throw e;
   }
 });

@@ -20,6 +20,9 @@ export interface CalendarDTO {
 }
 export interface RequestCtx { ip: string; ua?: string }
 
+/** Per-IP lock keys only make sense when we actually know the client IP (TRUST_PROXY behind a proxy). */
+const ipKeys = (ip: string): string[] => (ip === 'unknown' ? [] : [`ip:${ip}`]);
+
 const PALETTE = ['#2563eb', '#db2777', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#4b5563'];
 const GENERIC_AUTH = 'Invalid calendar ID or password';
 
@@ -79,7 +82,7 @@ export interface JoinResult {
 
 export async function joinCalendar(db: Db, input: JoinInput, ctx: RequestCtx): Promise<JoinResult> {
   const calKey = `cal:${input.code}`;
-  const keys = [calKey, `ip:${ctx.ip}`];
+  const keys = [calKey, ...ipKeys(ctx.ip)];
   await assertNotLocked(db, keys);
 
   const [cal] = await db.select().from(calendars).where(and(eq(calendars.code, input.code), isNull(calendars.deletedAt))).limit(1);
@@ -185,7 +188,7 @@ export async function changePassword(db: Db, actor: Actor, current: string, next
 export async function recoverPassword(db: Db, code: string, recoveryCode: string, newPassword: string, ctx: RequestCtx) {
   parseOrThrow(passwordSchema, newPassword);
   const calKey = `rec:${code}`;
-  const keys = [calKey, `ip:${ctx.ip}`];
+  const keys = [calKey, ...ipKeys(ctx.ip)];
   const fail = async (): Promise<never> => {
     await recordFailure(db, keys);
     throw new AppError('UNAUTHENTICATED', 'Invalid calendar ID or recovery code');

@@ -1,9 +1,24 @@
 import type { ReactNode } from 'react';
-export const metadata = { title: 'Family Calendar' };
+import type { Metadata, Viewport } from 'next';
+import { Bricolage_Grotesque, Figtree } from 'next/font/google';
+import { ToastProvider } from '@/components/ui/Toast';
+import './globals.css';
+
+const display = Bricolage_Grotesque({ subsets: ['latin'], variable: '--font-bricolage', display: 'swap' });
+const body = Figtree({ subsets: ['latin'], variable: '--font-figtree', display: 'swap' });
+
+export const metadata: Metadata = {
+  title: 'Family Calendar',
+  description: 'One shared calendar for the whole family. See who is doing what, and spot clashes early.',
+};
+export const viewport: Viewport = { width: 'device-width', initialScale: 1 };
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" className={`${display.variable} ${body.variable}`}>
+      <body>
+        <ToastProvider>{children}</ToastProvider>
+      </body>
     </html>
   );
 }

@@ -74,6 +74,17 @@ else
   DOMAIN="$(grep -E '^DOMAIN=' .env | head -1 | cut -d= -f2-)"
 fi
 
+# Small servers (1-2 GB) run out of memory while building the app; add swap space so the build can finish.
+mem_mb="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
+if [ "$mem_mb" -lt 3000 ] && [ "$(swapon --show --noheadings | wc -l)" -eq 0 ]; then
+  say "Only ${mem_mb} MB of memory: adding 3 GB of swap space so the build can finish"
+  $SUDO fallocate -l 3G /swapfile 2>/dev/null || $SUDO dd if=/dev/zero of=/swapfile bs=1M count=3072 status=none
+  $SUDO chmod 600 /swapfile
+  $SUDO mkswap /swapfile >/dev/null
+  $SUDO swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' | $SUDO tee -a /etc/fstab >/dev/null
+fi
+
 say "Building and starting the app (the first time takes several minutes)"
 $SUDO docker compose -f ops/docker-compose.yml --env-file .env up -d --build
 

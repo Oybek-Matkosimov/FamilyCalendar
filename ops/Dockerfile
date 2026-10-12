@@ -29,6 +29,7 @@ ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 RUN groupadd --system --gid 1001 app && useradd --system --uid 1001 --gid app --no-create-home app
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
+COPY --from=build --chown=app:app /app/public ./public
 # SQL migrations are read from disk at start-up when AUTO_MIGRATE=true
 COPY --from=build --chown=app:app /app/src/server/db/migrations ./src/server/db/migrations
 USER app

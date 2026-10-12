@@ -57,6 +57,7 @@ async function main() {
     cpSync('.next/standalone', appDir, { recursive: true });
     mkdirSync(path.join(appDir, '.next'), { recursive: true });
     cpSync('.next/static', path.join(appDir, '.next/static'), { recursive: true });
+    cpSync('public', path.join(appDir, 'public'), { recursive: true }); // the Docker image copies public/ too
     cpSync('src/server/db/migrations', path.join(appDir, 'src/server/db/migrations'), { recursive: true });
 
     const leaked = walk('.next/static')
@@ -97,6 +98,16 @@ async function main() {
       const bad = inline.filter((attrs) => !nonce || !attrs.includes(`nonce="${nonce}"`));
       check(`${route}: all ${inline.length} inline scripts carry the nonce`, inline.length > 0 && bad.length === 0, `${bad.length} without nonce`);
     }
+
+    const mres = await fetch(`${base}/manifest.webmanifest`);
+    const mjson = (await mres.json().catch(() => ({}))) as { name?: string; icons?: { src: string }[] };
+    check("web app manifest is served and named Oybek's Calendar", mres.status === 200 && mjson.name === "Oybek's Calendar", String(mres.status));
+    for (const icon of mjson.icons ?? []) {
+      const r = await fetch(base + icon.src);
+      check(`icon ${icon.src} is served as an image`, r.status === 200 && (r.headers.get('content-type') ?? '').startsWith('image/png'), `${r.status} ${r.headers.get('content-type')}`);
+    }
+    const sw = await fetch(`${base}/sw.js`);
+    check('service worker and offline page are served', sw.status === 200 && (await fetch(`${base}/offline.html`)).status === 200);
 
     const create = await fetch(`${base}/api/calendars`, {
       method: 'POST',

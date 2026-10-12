@@ -13,7 +13,10 @@ RUN npm ci
 
 FROM deps AS build
 COPY . .
+# Allow Node to use more memory while building (small servers rely on swap space); the default limit is ~430 MB here.
+ENV NODE_OPTIONS=--max-old-space-size=2048
 RUN npm run build
+ENV NODE_OPTIONS=
 
 FROM deps AS migrate
 ENV NODE_ENV=production
